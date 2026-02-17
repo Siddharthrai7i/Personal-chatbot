@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://personal-chatbot-4.onrender.com")
 
 # Page config
 st.set_page_config(
