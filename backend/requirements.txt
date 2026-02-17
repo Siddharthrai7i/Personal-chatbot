@@ -5,6 +5,6 @@ chromadb==0.4.18
 google-generativeai
 PyPDF2
 python-multipart
+pydantic>=2.7.0
 requests
 numpy<2.0
-PYTHON_VERSION=3.12.0
