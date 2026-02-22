@@ -1,4 +1,5 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Generator
+import json
 from app.core.vector_store import VectorStore
 from app.core.embeddings import EmbeddingGenerator
 from app.core.llm_handler import LLMHandler
@@ -137,7 +138,67 @@ class Retriever:
             'chunks_used': len(chunks),
             'error': None
         }
-    
+
+    def retrieve_and_generate_stream(
+        self,
+        query: str,
+        top_k: Optional[int] = None
+    ) -> Generator:
+        """
+        Streaming RAG pipeline: Retrieve chunks and stream the LLM response as SSE events.
+        
+        Yields:
+            SSE-formatted strings: 'data: <token>\n\n' for each chunk,
+            then 'data: {"sources": [...]}\n\n' and finally 'data: [DONE]\n\n'
+        """
+        if not query or not query.strip():
+            yield f'data: {json.dumps({"error": "Empty query provided"})}\n\n'
+            yield 'data: [DONE]\n\n'
+            return
+        
+        top_k = top_k or self.top_k
+        
+        # Step 1: Generate query embedding
+        query_embedding = self.embedding_generator.generate_query_embedding(query)
+        
+        if not query_embedding:
+            yield f'data: {json.dumps({"error": "Failed to generate query embedding"})}\n\n'
+            yield 'data: [DONE]\n\n'
+            return
+        
+        # Step 2: Search vector database
+        search_results = self.vector_store.search(query_embedding, top_k=top_k)
+        
+        if search_results['count'] == 0:
+            yield 'data: I don\'t have any information to answer that question. Please make sure you\'ve uploaded relevant documents.\n\n'
+            yield 'data: [DONE]\n\n'
+            return
+        
+        # Step 3: Extract chunks and metadata
+        chunks = search_results['documents']
+        metadatas = search_results['metadatas']
+        distances = search_results['distances']
+        
+        sources = []
+        for i, (chunk, metadata, distance) in enumerate(zip(chunks, metadatas, distances)):
+            sources.append({
+                'chunk_text': chunk[:100] + "..." if len(chunk) > 100 else chunk,
+                'source_file': metadata.get('source_file', 'unknown'),
+                'chunk_index': metadata.get('chunk_index', 0),
+                'similarity_score': round(1 - distance, 4)
+            })
+        
+        # Step 4: Stream LLM response
+        for text_chunk in self.llm_handler.generate_rag_response_stream(
+            query=query,
+            context_chunks=chunks
+        ):
+            yield f'data: {text_chunk}\n\n'
+        
+        # Send sources as a JSON event at the end
+        yield f'data: {json.dumps({"sources": sources, "chunks_used": len(chunks)})}\n\n'
+        yield 'data: [DONE]\n\n'
+
     def retrieve_only(
         self, 
         query: str,
