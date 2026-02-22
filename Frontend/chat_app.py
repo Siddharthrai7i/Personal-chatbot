@@ -216,36 +216,43 @@ if prompt := st.chat_input("Type a message..."):
     
     # Get AI response
     with st.chat_message("assistant"):
-        with st.spinner(""):
-            try:
-                response = requests.post(
-                    f"{BACKEND_URL}/query",
-                    json={"query": prompt, "top_k": 5},
-                    timeout=30
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    if data.get("success"):
-                        answer = data.get("answer", "I couldn't generate an answer.")
-                        
-                        # Display answer ONLY
-                        st.markdown(answer)
-                        
-                        # Save to history - NO SOURCES
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": answer
-                        })
-                    else:
-                        error_msg = data.get("error", "Unknown error")
-                        st.error(f"❌ {error_msg}")
-                else:
-                    st.error(f"Backend error: {response.status_code}")
-                    
-            except requests.exceptions.ConnectionError:
-                st.error(f"❌ Cannot connect to backend at {BACKEND_URL}")
-            except requests.exceptions.Timeout:
-                st.error("⏱️ Request timed out")
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+        try:
+            # Stream response from backend
+            response = requests.post(
+                f"{BACKEND_URL}/query/stream",
+                json={"query": prompt, "top_k": 5},
+                timeout=60,
+                stream=True
+            )
+            
+            if response.status_code == 200:
+                # Generator that parses SSE events and yields text tokens
+                def stream_tokens():
+                    for line in response.iter_lines(decode_unicode=True):
+                        if line and line.startswith("data: "):
+                            token = line[6:]  # Remove "data: " prefix
+                            if token == "[DONE]":
+                                return
+                            # Skip JSON metadata events (sources info)
+                            if token.startswith("{") and '"sources"' in token:
+                                continue
+                            yield token
+                
+                # Use st.write_stream for live typing effect
+                full_response = st.write_stream(stream_tokens())
+                
+                # Save to history
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": full_response
+                })
+            else:
+                st.error(f"Backend error: {response.status_code}")
+                
+        except requests.exceptions.ConnectionError:
+            st.error(f"❌ Cannot connect to backend at {BACKEND_URL}")
+        except requests.exceptions.Timeout:
+            st.error("⏱️ Request timed out")
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+

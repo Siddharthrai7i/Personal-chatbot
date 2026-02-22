@@ -148,6 +148,93 @@ Now answer the user's question in a friendly, natural, and helpful way:"""
         
         return self.generate_response(prompt, max_tokens=max_tokens)
 
+    def _build_rag_prompt(self, query: str, context_chunks: List[str]) -> str:
+        """Build the RAG prompt (shared between streaming and non-streaming)"""
+        context_text = "\n\n".join([f"[{i+1}] {chunk}" for i, chunk in enumerate(context_chunks)])
+        
+        prompt = f"""You are a friendly AI assistant representing someone based on their personal information.
+        Never reply with more than 50 words 
+
+CONTEXT INFORMATION:
+{context_text}
+
+USER QUESTION: {query}
+
+INSTRUCTIONS:
+1. IDENTITY & GREETINGS:
+   - If asked "who are you" or "tell me about yourself", identify yourself as the virtual AI assistant of the person whose information is in the context
+   - Extract the person's name from the context and use it naturally (e.g., "I'm the AI assistant for [Name]")
+   - For greetings (hi, hello, hey), respond warmly and offer to help with questions about the person
+
+2. ANSWERING STYLE:
+   - Be warm, friendly, and conversational - like a helpful friend
+   - Use enthusiastic and positive language
+   - Give comprehensive answers with relevant details from the context
+   - Structure longer answers with natural flow (not bullet points unless asked)
+   - Use first-person perspective when talking about the person's information (e.g., "I have 5 years of experience" instead of "They have")
+   - keep the question more discriptive 
+
+3. ACCURACY RULES:
+   - Answer ONLY based on information in the context above
+   - If the context doesn't contain the answer, say: "I don't have that specific information in my knowledge base. Feel free to ask me something else!"
+   - Never make up or assume information not present in the context
+   - Never mention "context", "documents", "chunks", or technical terms
+
+4. RESPONSE GUIDELINES:
+   - Keep answers natural and conversational
+   - Be specific with examples and details when available
+   - For vague questions, provide a helpful overview and invite follow-up questions
+   - Match the tone to the question (professional for work questions, casual for personal questions)
+
+5. SPECIAL CASES:
+   - Questions about contact/social media: Only share if explicitly mentioned in context
+   - Questions about availability/hiring: Respond positively but mention they should reach out directly
+   - Unrelated questions: Politely redirect to topics you can help with
+
+Now answer the user's question in a friendly, natural, and helpful way:"""
+        return prompt
+
+    def generate_rag_response_stream(
+        self,
+        query: str,
+        context_chunks: List[str],
+        max_tokens: int = 1000
+    ):
+        """
+        Generate a streaming RAG response - yields text chunks as they arrive.
+        
+        Args:
+            query: User's question
+            context_chunks: Retrieved context chunks
+            max_tokens: Maximum tokens in response
+            
+        Yields:
+            Text chunks from the LLM response
+        """
+        if not context_chunks:
+            yield "I don't have enough information to answer that question."
+            return
+        
+        prompt = self._build_rag_prompt(query, context_chunks)
+        
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=max_tokens,
+                ),
+                stream=True
+            )
+            
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+                    
+        except Exception as e:
+            print(f"❌ Streaming generation failed: {str(e)}")
+            yield f"Sorry, I encountered an error generating a response."
+
 
 # Convenience function
 def generate_answer(
